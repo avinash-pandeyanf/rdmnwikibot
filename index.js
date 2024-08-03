@@ -2,7 +2,6 @@ const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios'); // Import Axios for making HTTP requests
 
 
-// Replace 'YOUR_TELEGRAM_BOT_TOKEN' with the token you obtained from BotFather.
 const token = '6657021322:AAG2bPiGvQ3_Ivu_zBWqLnv44o5-pklDbOg';
 
 // Create a new Telegram bot instance
@@ -12,13 +11,12 @@ const bot = new TelegramBot(token, { polling: true });
 
 // Listen for incoming messages
 bot.on('message', async (msg) => {
-    console.log('Received message:', msg.text); // Add this line
+    console.log('Received message:', msg.text); 
 
   const chatId = msg.chat.id;
   const message = msg.text;
 
   // Handle incoming messages here
-  // You can add your custom logic and reply to users.
   if (message === '/randomwiki') {
     // Fetch a random Wikipedia article title
     try {
