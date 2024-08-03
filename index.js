@@ -16,13 +16,10 @@ bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const message = msg.text;
 
-  // Handle incoming messages here
   if (message === '/randomwiki') {
-    // Fetch a random Wikipedia article title
     try {
         const randomArticleTitle = await getRandomWikipediaArticle();
         if (randomArticleTitle) {
-            // Now proceed to fetch the summary for this article
             const summary = await getWikipediaSummary(randomArticleTitle);
             if (summary) {
                 // Post the summary to the Telegram group
@@ -39,7 +36,6 @@ bot.on('message', async (msg) => {
     }
 }
 });
-// Fetch a random Wikipedia article title
 async function getRandomWikipediaArticle() {
     try {
         const response = await axios.get('https://en.wikipedia.org/w/api.php', {
@@ -60,7 +56,6 @@ async function getRandomWikipediaArticle() {
     }
 }
 
-// Fetch the summary for a given article title
 async function getWikipediaSummary(articleTitle) {
     try {
         const response = await axios.get('https://en.wikipedia.org/w/api.php', {
