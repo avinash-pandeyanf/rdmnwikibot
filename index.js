@@ -1,8 +1,9 @@
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios'); // Import Axios for making HTTP requests
+require('dotenv').config();
 
 
-const token = '6657021322:AAG2bPiGvQ3_Ivu_zBWqLnv44o5-pklDbOg';
+const token = process.env.TELEGRAM_BOT_TOKEN;
 
 // Create a new Telegram bot instance
 const bot = new TelegramBot(token, { polling: true });
