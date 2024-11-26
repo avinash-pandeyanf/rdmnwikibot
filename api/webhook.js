@@ -93,10 +93,23 @@ async function handleMessage(msg) {
                         const summary = await getWikipediaSummary(randomArticleTitle);
                         const articleUrl = `https://${defaultLang}.wikipedia.org/wiki/${encodeURIComponent(randomArticleTitle)}`;
                         if (summary) {
-                            await bot.sendMessage(chatId, 
-                                `📖 Random Wikipedia Article:\n\nTitle: ${randomArticleTitle}\n\n${summary}\n\n` +
-                                `🔗 Read more: ${articleUrl}\n\nWant another article? Just type /randomwiki again!`,
-                                { disable_web_page_preview: false }
+                            const keyboard = {
+                                inline_keyboard: [
+                                    [
+                                        { text: '🔄 New Article', callback_data: 'random' },
+                                        { text: '🔍 Read More', url: articleUrl }
+                                    ]
+                                ]
+                            };
+
+                            await bot.sendMessage(
+                                chatId,
+                                `📖 *${randomArticleTitle}*\n\n${summary}\n\n[Read full article](${articleUrl})`,
+                                {
+                                    parse_mode: 'Markdown',
+                                    reply_markup: keyboard,
+                                    disable_web_page_preview: false
+                                }
                             );
                         } else {
                             throw new Error('Could not fetch article summary');
@@ -257,18 +270,138 @@ async function searchWikipedia(chatId, searchTerm) {
     }
 }
 
+// Handle inline queries
+async function handleInlineQuery(inlineQuery) {
+    const query = inlineQuery.query;
+    const id = inlineQuery.id;
+
+    if (!query) {
+        return await bot.answerInlineQuery(id, [{
+            type: 'article',
+            id: 'help',
+            title: 'Search Wikipedia',
+            description: 'Type something to search Wikipedia',
+            input_message_content: {
+                message_text: 'Please type something after @your_bot_name to search Wikipedia'
+            }
+        }]);
+    }
+
+    try {
+        const response = await axios.get(`https://${defaultLang}.wikipedia.org/w/api.php`, {
+            params: {
+                action: 'query',
+                format: 'json',
+                list: 'search',
+                srsearch: query,
+                srlimit: 5,
+                srprop: 'snippet'
+            }
+        });
+
+        const results = response.data.query.search.map((result, index) => ({
+            type: 'article',
+            id: String(index),
+            title: result.title,
+            description: result.snippet.replace(/<\/?[^>]+(>|$)/g, ''),
+            input_message_content: {
+                message_text: `📚 *${result.title}*\n\n${result.snippet.replace(/<\/?[^>]+(>|$)/g, '')}\n\n🔗 https://${defaultLang}.wikipedia.org/wiki/${encodeURIComponent(result.title)}`,
+                parse_mode: 'Markdown'
+            },
+            reply_markup: {
+                inline_keyboard: [[
+                    {
+                        text: '🔍 Read More',
+                        url: `https://${defaultLang}.wikipedia.org/wiki/${encodeURIComponent(result.title)}`
+                    }
+                ]]
+            }
+        }));
+
+        await bot.answerInlineQuery(id, results);
+    } catch (error) {
+        console.error('Inline query error:', error);
+        await bot.answerInlineQuery(id, [{
+            type: 'article',
+            id: 'error',
+            title: 'Error',
+            description: 'Could not perform search. Please try again.',
+            input_message_content: {
+                message_text: '❌ Search failed. Please try again.'
+            }
+        }]);
+    }
+}
+
+// Handle callback queries
+async function handleCallbackQuery(callbackQuery) {
+    try {
+        const data = callbackQuery.data;
+        const chatId = callbackQuery.message.chat.id;
+        const messageId = callbackQuery.message.message_id;
+
+        if (data.startsWith('random')) {
+            await bot.answerCallbackQuery(callbackQuery.id, { text: 'Fetching new article...' });
+            const randomArticleTitle = await getRandomWikipediaArticle();
+            if (randomArticleTitle) {
+                const summary = await getWikipediaSummary(randomArticleTitle);
+                const articleUrl = `https://${defaultLang}.wikipedia.org/wiki/${encodeURIComponent(randomArticleTitle)}`;
+                
+                const keyboard = {
+                    inline_keyboard: [
+                        [
+                            { text: '🔄 New Article', callback_data: 'random' },
+                            { text: '🔍 Read More', url: articleUrl }
+                        ]
+                    ]
+                };
+
+                await bot.editMessageText(
+                    `📖 *${randomArticleTitle}*\n\n${summary}\n\n[Read full article](${articleUrl})`,
+                    {
+                        chat_id: chatId,
+                        message_id: messageId,
+                        parse_mode: 'Markdown',
+                        reply_markup: keyboard,
+                        disable_web_page_preview: false
+                    }
+                );
+            }
+        }
+    } catch (error) {
+        console.error('Callback query error:', error);
+        await bot.answerCallbackQuery(callbackQuery.id, {
+            text: '❌ An error occurred. Please try again.',
+            show_alert: true
+        });
+    }
+}
+
 // Export the serverless function
 module.exports = async (req, res) => {
     try {
         if (req.method === 'POST') {
             const { body } = req;
+            
+            // Handle inline queries
+            if (body.inline_query) {
+                await handleInlineQuery(body.inline_query);
+                return res.status(200).json({ ok: true });
+            }
+            
+            // Handle regular messages
             if (body.message) {
                 await handleMessage(body.message);
                 return res.status(200).json({ ok: true });
             }
+
+            // Handle callback queries (for buttons)
+            if (body.callback_query) {
+                await handleCallbackQuery(body.callback_query);
+                return res.status(200).json({ ok: true });
+            }
         }
         
-        // For GET requests, return status
         return res.status(200).json({ status: 'Bot is running' });
     } catch (error) {
         console.error('Error in webhook handler:', error);
