@@ -8,25 +8,8 @@ if (!token) {
     process.exit(1);
 }
 
-// Create a new Telegram bot instance
-const bot = new TelegramBot(token, { polling: true });
-
 // Default language for articles
 let defaultLang = 'en';
-
-// Simple rate limiting
-const userCooldowns = new Map();
-const COOLDOWN_TIME = 2000; // 2 seconds between commands
-
-// Command list for help message
-const commands = {
-    '/start': 'Get started with the bot',
-    '/help': 'Show available commands',
-    '/randomwiki': 'Get a random Wikipedia article',
-    '/search': 'Search Wikipedia articles (usage: /search your search term)',
-    '/setlang': 'Set Wikipedia language (usage: /setlang es for Spanish)',
-    '/today': 'Get featured article of the day'
-};
 
 // Language codes mapping
 const languageCodes = {
@@ -40,48 +23,59 @@ const languageCodes = {
     'ja': 'Japanese'
 };
 
-// Initialize bot and set commands
-bot.setMyCommands(Object.entries(commands).map(([command, description]) => ({
-    command: command.slice(1),
-    description
-}))).catch(error => {
-    console.error('Error setting bot commands:', error);
+// Command list for help message
+const commands = {
+    '/start': 'Get started with the bot',
+    '/help': 'Show available commands',
+    '/randomwiki': 'Get a random Wikipedia article',
+    '/search': 'Search Wikipedia articles (usage: /search your search term)',
+    '/setlang': 'Set Wikipedia language (usage: /setlang es for Spanish)',
+    '/today': 'Get featured article of the day'
+};
+
+// Create bot instance
+const url = process.env.VERCEL_URL || 'https://your-domain.vercel.app';
+const bot = new TelegramBot(token, {
+    webHook: {
+        port: process.env.PORT
+    }
 });
 
-// Rate limiting function
-function checkRateLimit(userId) {
-    const now = Date.now();
-    const lastUsed = userCooldowns.get(userId) || 0;
-    
-    if (now - lastUsed < COOLDOWN_TIME) {
-        return false;
+// Webhook endpoint for Vercel
+module.exports = async (req, res) => {
+    try {
+        if (req.method === 'POST') {
+            const { body } = req;
+            if (body.message) {
+                await handleMessage(body.message);
+            }
+            res.status(200).json({ ok: true });
+        } else {
+            // Set webhook
+            if (req.method === 'GET') {
+                try {
+                    const webhookUrl = `${url}/api/webhook`;
+                    await bot.setWebHook(`${webhookUrl}`);
+                    res.status(200).json({ message: 'Webhook set successfully' });
+                } catch (error) {
+                    console.error('Error setting webhook:', error);
+                    res.status(500).json({ error: 'Failed to set webhook' });
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error in webhook handler:', error);
+        res.status(500).json({ error: 'Failed to process update' });
     }
-    
-    userCooldowns.set(userId, now);
-    return true;
-}
+};
 
-// Error handler function
-function handleError(chatId, error, customMessage = null) {
-    console.error('Error:', error);
-    const message = customMessage || '❌ An error occurred. Please try again later.';
-    bot.sendMessage(chatId, message).catch(console.error);
-}
-
-// Listen for incoming messages
-bot.on('message', async (msg) => {
+// Message handler
+async function handleMessage(msg) {
     try {
         const chatId = msg.chat.id;
-        const userId = msg.from.id;
         const message = msg.text;
 
         if (!message) return;
-
-        // Rate limiting
-        if (!checkRateLimit(userId)) {
-            bot.sendMessage(chatId, '⏳ Please wait a moment before sending another command.');
-            return;
-        }
 
         console.log('Received message:', message);
 
@@ -91,7 +85,7 @@ bot.on('message', async (msg) => {
             if (searchTerm) {
                 await searchWikipedia(chatId, searchTerm);
             } else {
-                bot.sendMessage(chatId, '❌ Please provide a search term. Example: /search Albert Einstein');
+                await bot.sendMessage(chatId, '❌ Please provide a search term. Example: /search Albert Einstein');
             }
             return;
         }
@@ -100,12 +94,12 @@ bot.on('message', async (msg) => {
             const langCode = message.slice(9).toLowerCase().trim();
             if (languageCodes[langCode]) {
                 defaultLang = langCode;
-                bot.sendMessage(chatId, `✅ Language set to ${languageCodes[langCode]}`);
+                await bot.sendMessage(chatId, `✅ Language set to ${languageCodes[langCode]}`);
             } else {
                 const availableLangs = Object.entries(languageCodes)
                     .map(([code, name]) => `${code} - ${name}`)
                     .join('\n');
-                bot.sendMessage(chatId, `❌ Invalid language code. Available languages:\n${availableLangs}`);
+                await bot.sendMessage(chatId, `❌ Invalid language code. Available languages:\n${availableLangs}`);
             }
             return;
         }
@@ -115,19 +109,19 @@ bot.on('message', async (msg) => {
                 const welcomeMessage = 'Welcome to RandomWiki Bot! 📚\n\n' +
                     'I can help you discover interesting Wikipedia articles and search for specific topics.\n\n' +
                     'Use /help to see all available commands.';
-                bot.sendMessage(chatId, welcomeMessage);
+                await bot.sendMessage(chatId, welcomeMessage);
                 break;
 
             case '/help':
                 const helpMessage = Object.entries(commands)
                     .map(([cmd, desc]) => `${cmd} - ${desc}`)
                     .join('\n');
-                bot.sendMessage(chatId, `Available commands:\n${helpMessage}`);
+                await bot.sendMessage(chatId, `Available commands:\n${helpMessage}`);
                 break;
 
             case '/randomwiki':
                 try {
-                    bot.sendMessage(chatId, '🔄 Fetching random article...');
+                    await bot.sendMessage(chatId, '🔄 Fetching random article...');
                     const randomArticleTitle = await getRandomWikipediaArticle();
                     if (randomArticleTitle) {
                         const summary = await getWikipediaSummary(randomArticleTitle);
@@ -151,7 +145,7 @@ bot.on('message', async (msg) => {
 
             case '/today':
                 try {
-                    bot.sendMessage(chatId, '🔄 Fetching today\'s featured article...');
+                    await bot.sendMessage(chatId, '🔄 Fetching today\'s featured article...');
                     const date = new Date();
                     const year = date.getFullYear();
                     const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -159,7 +153,7 @@ bot.on('message', async (msg) => {
                     
                     const response = await axios.get(
                         `https://${defaultLang}.wikipedia.org/api/rest_v1/feed/featured/${year}/${month}/${day}`,
-                        { timeout: 10000 } // 10 second timeout
+                        { timeout: 10000 }
                     );
                     
                     if (response.data && response.data.tfa) {
@@ -200,18 +194,20 @@ bot.on('message', async (msg) => {
             default:
                 // Only respond to unknown commands that start with /
                 if (message.startsWith('/')) {
-                    bot.sendMessage(chatId, '❌ Unknown command. Use /help to see available commands.');
+                    await bot.sendMessage(chatId, '❌ Unknown command. Use /help to see available commands.');
                 }
         }
     } catch (error) {
         handleError(msg.chat.id, error);
     }
-});
+}
 
-// Error event handler
-bot.on('polling_error', (error) => {
-    console.error('Polling error:', error);
-});
+// Error handler function
+async function handleError(chatId, error, customMessage = null) {
+    console.error('Error:', error);
+    const message = customMessage || '❌ An error occurred. Please try again later.';
+    await bot.sendMessage(chatId, message).catch(console.error);
+}
 
 /**
  * Fetches a random article title from Wikipedia
@@ -227,7 +223,7 @@ async function getRandomWikipediaArticle() {
                 rnnamespace: 0,
                 rnlimit: 1,
             },
-            timeout: 10000 // 10 second timeout
+            timeout: 10000
         });
 
         return response.data.query.random[0].title;
@@ -253,7 +249,7 @@ async function getWikipediaSummary(articleTitle) {
                 explaintext: true,
                 titles: articleTitle,
             },
-            timeout: 10000 // 10 second timeout
+            timeout: 10000
         });
 
         const pages = response.data.query.pages;
@@ -272,7 +268,7 @@ async function getWikipediaSummary(articleTitle) {
  */
 async function searchWikipedia(chatId, searchTerm) {
     try {
-        bot.sendMessage(chatId, '🔍 Searching...');
+        await bot.sendMessage(chatId, '🔍 Searching...');
         const response = await axios.get(`https://${defaultLang}.wikipedia.org/w/api.php`, {
             params: {
                 action: 'query',
@@ -282,12 +278,12 @@ async function searchWikipedia(chatId, searchTerm) {
                 srlimit: 5,
                 srprop: 'snippet',
             },
-            timeout: 10000 // 10 second timeout
+            timeout: 10000
         });
 
         const results = response.data.query.search;
         if (results.length === 0) {
-            bot.sendMessage(chatId, '❌ No results found. Try a different search term.');
+            await bot.sendMessage(chatId, '❌ No results found. Try a different search term.');
             return;
         }
 
@@ -307,12 +303,3 @@ async function searchWikipedia(chatId, searchTerm) {
         handleError(chatId, error, '❌ Error searching Wikipedia. Please try again later.');
     }
 }
-
-// Handle graceful shutdown
-process.on('SIGINT', () => {
-    console.log('Bot is shutting down...');
-    bot.stopPolling();
-    process.exit(0);
-});
-
-console.log('Bot is running...');
