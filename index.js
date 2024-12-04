@@ -84,6 +84,50 @@ module.exports = async (req, res) => {
     }
 };
 
+// Keyboard layouts
+const mainKeyboard = {
+    reply_markup: {
+        keyboard: [
+            ['🎲 Random Article', '🔍 Search'],
+            ['📈 Trending', '📚 History'],
+            ['🌍 Change Language', '❓ Help']
+        ],
+        resize_keyboard: true
+    }
+};
+
+const languageKeyboard = {
+    reply_markup: {
+        inline_keyboard: [
+            [
+                { text: '🇬🇧 English', callback_data: 'lang_en' },
+                { text: '🇪🇸 Spanish', callback_data: 'lang_es' }
+            ],
+            [
+                { text: '🇫🇷 French', callback_data: 'lang_fr' },
+                { text: '🇩🇪 German', callback_data: 'lang_de' }
+            ],
+            [
+                { text: '🇮🇹 Italian', callback_data: 'lang_it' },
+                { text: '🇷🇺 Russian', callback_data: 'lang_ru' }
+            ]
+        ]
+    }
+};
+
+// Enhanced message formatting
+const formatArticle = (title, summary, url) => {
+    return `📖 *${title}*\n\n${summary}\n\n` +
+           `🔗 [Read full article](${url})\n\n` +
+           `Share this article: /share ${title}`;
+};
+
+const formatTrendingArticle = (article, index) => {
+    const views = article.views.toLocaleString();
+    const emoji = index === 0 ? '🏆' : index === 1 ? '🥈' : index === 2 ? '🥉' : '📊';
+    return `${emoji} *${article.title}*\n└ ${views} views`;
+};
+
 // Message handler
 async function handleMessage(msg) {
     try {
@@ -94,7 +138,52 @@ async function handleMessage(msg) {
 
         console.log('Received message:', message);
 
-        // Handle commands
+        // Handle text button presses
+        switch (message) {
+            case '🎲 Random Article':
+                message = '/randomwiki';
+                break;
+            case '🔍 Search':
+                await bot.sendMessage(chatId, 
+                    '🔎 *How to search:*\nUse `/search` followed by your search term.\n\nExample: `/search Albert Einstein`',
+                    { parse_mode: 'Markdown' }
+                );
+                return;
+            case '📈 Trending':
+                message = '/trending';
+                break;
+            case '📚 History':
+                message = '/history';
+                break;
+            case '🌍 Change Language':
+                await bot.sendMessage(chatId, 
+                    '🌍 *Select your preferred language:*',
+                    { parse_mode: 'Markdown', ...languageKeyboard }
+                );
+                return;
+            case '❓ Help':
+                message = '/help';
+                break;
+        }
+
+        if (message.startsWith('/start')) {
+            const welcomeMessage = 
+                '🎉 *Welcome to RandomWiki Bot!*\n\n' +
+                'Explore Wikipedia articles with ease:\n\n' +
+                '• Get random articles 🎲\n' +
+                '• Search for specific topics 🔍\n' +
+                '• View trending articles 📈\n' +
+                '• Track your reading history 📚\n' +
+                '• Share interesting finds 📤\n\n' +
+                'Use the keyboard below to get started! 👇';
+
+            await bot.sendMessage(chatId, welcomeMessage, {
+                parse_mode: 'Markdown',
+                ...mainKeyboard
+            });
+            return;
+        }
+
         if (message.startsWith('/search ')) {
             const searchTerm = message.slice(8).trim();
             if (searchTerm) {
@@ -120,7 +209,27 @@ async function handleMessage(msg) {
         }
 
         if (message.startsWith('/history')) {
-            await viewHistory(chatId);
+            const history = userHistory.get(chatId) || [];
+            if (history.length === 0) {
+                await bot.sendMessage(chatId, 
+                    '📚 Your reading history is empty.\n\nTry getting a random article with 🎲!',
+                    { ...mainKeyboard }
+                );
+                return;
+            }
+            
+            const historyText = history
+                .slice(0, 10)
+                .map((item, index) => {
+                    const date = new Date(item.timestamp).toLocaleDateString();
+                    return `${index + 1}. *${item.article}*\n└ Read on: ${date}`;
+                })
+                .join('\n\n');
+                
+            await bot.sendMessage(chatId, 
+                `📚 *Your Recent Reading History*\n\n${historyText}\n\n_Showing last 10 articles_`,
+                { parse_mode: 'Markdown' }
+            );
             return;
         }
 
@@ -135,7 +244,26 @@ async function handleMessage(msg) {
         }
 
         if (message.startsWith('/trending')) {
-            await getTrendingArticles(chatId);
+            await bot.sendMessage(chatId, '🔄 *Fetching trending articles...*', {
+                parse_mode: 'Markdown'
+            });
+            
+            const response = await axios.get(
+                `https://wikipedia.org/api/rest_v1/page/most-read/${defaultLang.toUpperCase()}`
+            );
+            
+            const articles = response.data.articles
+                .slice(0, 5)
+                .map((article, index) => formatTrendingArticle(article, index))
+                .join('\n\n');
+                
+            await bot.sendMessage(chatId,
+                `📈 *Trending Articles Today*\n\n${articles}`,
+                { 
+                    parse_mode: 'Markdown',
+                    disable_web_page_preview: true
+                }
+            );
             return;
         }
 
@@ -164,9 +292,19 @@ async function handleMessage(msg) {
                             addToHistory(chatId, randomArticleTitle);
                             const articleUrl = `https://${defaultLang}.wikipedia.org/wiki/${encodeURIComponent(randomArticleTitle)}`;
                             await bot.sendMessage(chatId, 
-                                `📖 Random Wikipedia Article:\n\nTitle: ${randomArticleTitle}\n\n${summary}\n\n` +
-                                `🔗 Read more: ${articleUrl}\n\nWant another article? Just type /randomwiki again!`,
-                                { disable_web_page_preview: false }
+                                formatArticle(randomArticleTitle, summary, articleUrl),
+                                { 
+                                    parse_mode: 'Markdown',
+                                    disable_web_page_preview: false,
+                                    reply_markup: {
+                                        inline_keyboard: [
+                                            [
+                                                { text: '📤 Share Article', callback_data: `share_${randomArticleTitle}` },
+                                                { text: '🎲 Another Random', callback_data: 'random' }
+                                            ]
+                                        ]
+                                    }
+                                }
                             );
                         } else {
                             throw new Error('Could not fetch article summary');
@@ -436,3 +574,61 @@ async function getTrendingArticles(chatId) {
         await handleError(chatId, error, 'Failed to fetch trending articles');
     }
 }
+
+// Handle callback queries from inline keyboards
+bot.on('callback_query', async (query) => {
+    try {
+        const chatId = query.message.chat.id;
+        const data = query.data;
+
+        if (data.startsWith('lang_')) {
+            const lang = data.split('_')[1];
+            if (languageCodes[lang]) {
+                defaultLang = lang;
+                await bot.answerCallbackQuery(query.id, {
+                    text: `✅ Language set to ${languageCodes[lang]}`
+                });
+                await bot.sendMessage(chatId, 
+                    `🌍 Language changed to *${languageCodes[lang]}*\nTry getting a random article!`,
+                    { parse_mode: 'Markdown', ...mainKeyboard }
+                );
+            }
+        } else if (data === 'random') {
+            await bot.answerCallbackQuery(query.id);
+            const randomArticleTitle = await getRandomWikipediaArticle();
+            if (randomArticleTitle) {
+                const summary = await getCachedArticle(randomArticleTitle);
+                if (summary) {
+                    addToHistory(chatId, randomArticleTitle);
+                    const articleUrl = `https://${defaultLang}.wikipedia.org/wiki/${encodeURIComponent(randomArticleTitle)}`;
+                    await bot.sendMessage(chatId, 
+                        formatArticle(randomArticleTitle, summary, articleUrl),
+                        { 
+                            parse_mode: 'Markdown',
+                            disable_web_page_preview: false,
+                            reply_markup: {
+                                inline_keyboard: [
+                                    [
+                                        { text: '📤 Share Article', callback_data: `share_${randomArticleTitle}` },
+                                        { text: '🎲 Another Random', callback_data: 'random' }
+                                    ]
+                                ]
+                            }
+                        }
+                    );
+                }
+            }
+        } else if (data.startsWith('share_')) {
+            const title = data.substring(6);
+            await shareArticle(chatId, title);
+            await bot.answerCallbackQuery(query.id, {
+                text: '📤 Article shared successfully!'
+            });
+        }
+    } catch (error) {
+        console.error('Callback query error:', error);
+        await bot.answerCallbackQuery(query.id, {
+            text: '❌ An error occurred'
+        });
+    }
+});
