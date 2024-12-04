@@ -1,3 +1,14 @@
+// Cache for frequently accessed articles
+const articleCache = new Map();
+const CACHE_EXPIRY = 3600000; // 1 hour in milliseconds
+
+// User reading history storage
+const userHistory = new Map();
+const MAX_HISTORY_ITEMS = 50;
+
+// Shared articles storage
+const sharedArticles = new Map();
+
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
 require('dotenv').config();
@@ -30,7 +41,11 @@ const commands = {
     '/randomwiki': 'Get a random Wikipedia article',
     '/search': 'Search Wikipedia articles (usage: /search your search term)',
     '/setlang': 'Set Wikipedia language (usage: /setlang es for Spanish)',
-    '/today': 'Get featured article of the day'
+    '/today': 'Get featured article of the day',
+    '/history': 'View your reading history',
+    '/share': 'Share an article (usage: /share Article_Title)',
+    '/shared': 'View articles shared with you',
+    '/trending': 'View most read articles'
 };
 
 // Create bot instance
@@ -104,6 +119,26 @@ async function handleMessage(msg) {
             return;
         }
 
+        if (message.startsWith('/history')) {
+            await viewHistory(chatId);
+            return;
+        }
+
+        if (message.startsWith('/share ')) {
+            const title = message.slice(7).trim();
+            if (title) {
+                await shareArticle(chatId, title);
+            } else {
+                await bot.sendMessage(chatId, '❌ Please provide an article title. Example: /share Albert Einstein');
+            }
+            return;
+        }
+
+        if (message.startsWith('/trending')) {
+            await getTrendingArticles(chatId);
+            return;
+        }
+
         switch (message) {
             case '/start':
                 const welcomeMessage = 'Welcome to RandomWiki Bot! 📚\n\n' +
@@ -124,9 +159,10 @@ async function handleMessage(msg) {
                     await bot.sendMessage(chatId, '🔄 Fetching random article...');
                     const randomArticleTitle = await getRandomWikipediaArticle();
                     if (randomArticleTitle) {
-                        const summary = await getWikipediaSummary(randomArticleTitle);
-                        const articleUrl = `https://${defaultLang}.wikipedia.org/wiki/${encodeURIComponent(randomArticleTitle)}`;
+                        const summary = await getCachedArticle(randomArticleTitle);
                         if (summary) {
+                            addToHistory(chatId, randomArticleTitle);
+                            const articleUrl = `https://${defaultLang}.wikipedia.org/wiki/${encodeURIComponent(randomArticleTitle)}`;
                             await bot.sendMessage(chatId, 
                                 `📖 Random Wikipedia Article:\n\nTitle: ${randomArticleTitle}\n\n${summary}\n\n` +
                                 `🔗 Read more: ${articleUrl}\n\nWant another article? Just type /randomwiki again!`,
@@ -301,5 +337,102 @@ async function searchWikipedia(chatId, searchTerm) {
         });
     } catch (error) {
         handleError(chatId, error, '❌ Error searching Wikipedia. Please try again later.');
+    }
+}
+
+// Add to reading history
+function addToHistory(userId, article) {
+    if (!userHistory.has(userId)) {
+        userHistory.set(userId, []);
+    }
+    const history = userHistory.get(userId);
+    history.unshift({ article, timestamp: Date.now() });
+    if (history.length > MAX_HISTORY_ITEMS) {
+        history.pop();
+    }
+}
+
+// Get cached article or fetch new
+async function getCachedArticle(title) {
+    if (articleCache.has(title)) {
+        const cached = articleCache.get(title);
+        if (Date.now() - cached.timestamp < CACHE_EXPIRY) {
+            return cached.data;
+        }
+        articleCache.delete(title);
+    }
+    const data = await getWikipediaSummary(title);
+    if (data) {
+        articleCache.set(title, { data, timestamp: Date.now() });
+    }
+    return data;
+}
+
+// Share article with other users
+async function shareArticle(chatId, title) {
+    try {
+        const article = await getCachedArticle(title);
+        if (!article) {
+            throw new Error('Article not found');
+        }
+        
+        const shareId = Date.now().toString(36) + Math.random().toString(36).substr(2);
+        sharedArticles.set(shareId, {
+            title,
+            sharedBy: chatId,
+            timestamp: Date.now()
+        });
+        
+        const shareLink = `https://t.me/your_bot_username?start=share_${shareId}`;
+        await bot.sendMessage(chatId, 
+            `📤 Share this article:\n${title}\n\nShare link: ${shareLink}\n\nOthers can access this article by clicking the link or starting the bot and entering the code: ${shareId}`
+        );
+    } catch (error) {
+        await handleError(chatId, error, 'Failed to share article');
+    }
+}
+
+// View reading history
+async function viewHistory(chatId) {
+    try {
+        const history = userHistory.get(chatId) || [];
+        if (history.length === 0) {
+            await bot.sendMessage(chatId, '📚 Your reading history is empty');
+            return;
+        }
+        
+        const historyText = history
+            .slice(0, 10)
+            .map((item, index) => {
+                const date = new Date(item.timestamp).toLocaleDateString();
+                return `${index + 1}. ${item.article} (${date})`;
+            })
+            .join('\n');
+            
+        await bot.sendMessage(chatId, 
+            `📚 Your Recent Reading History:\n\n${historyText}\n\nShowing last 10 articles.`
+        );
+    } catch (error) {
+        await handleError(chatId, error, 'Failed to retrieve history');
+    }
+}
+
+// Get trending articles
+async function getTrendingArticles(chatId) {
+    try {
+        const response = await axios.get(
+            `https://wikipedia.org/api/rest_v1/page/most-read/${defaultLang.toUpperCase()}`
+        );
+        
+        const articles = response.data.articles
+            .slice(0, 5)
+            .map((article, index) => `${index + 1}. ${article.title} (${article.views.toLocaleString()} views)`)
+            .join('\n');
+            
+        await bot.sendMessage(chatId,
+            `📈 Trending Articles:\n\n${articles}`
+        );
+    } catch (error) {
+        await handleError(chatId, error, 'Failed to fetch trending articles');
     }
 }
